@@ -124,75 +124,54 @@ async function canSearchMembers(uid, groupName) {
 		throw new Error('[[error:no-privileges]]');
 	}
 }
-
+// modified this function
 groupsAPI.join = async function (caller, data) {
-	if (!data || !data.uid) {
-		throw new Error('[[error:invalid-data]]');
-	}
-	if (caller.uid <= 0) {
-		throw new Error('[[error:invalid-uid]]');
-	}
+    if (!data || !data.uid) {
+        throw new Error('[[error:invalid-data]]');
+    }
 
-	const groupName = await groups.getGroupNameByGroupSlug(data.slug);
-	if (!groupName) {
-		throw new Error('[[error:no-group]]');
-	}
+    const callerUid = parseInt(caller.uid, 10);
+    const targetUid = parseInt(data.uid, 10);
 
-	const [groupData, userExists, isCallerAdmin] = await Promise.all([
-		groups.getGroupData(groupName),
-		user.exists(data.uid),
-		privileges.admin.can('admin:groups', caller.uid),
-	]);
+    if (callerUid <= 0 || targetUid <= 0) {
+        throw new Error('[[error:invalid-uid]]');
+    }
 
-	if (!userExists) {
-		throw new Error('[[error:invalid-uid]]');
-	}
+    const groupName = await groups.getGroupNameByGroupSlug(data.slug);
+    if (!groupName) {
+        throw new Error('[[error:no-group]]');
+    }
 
-	const isSelf = parseInt(caller.uid, 10) === parseInt(data.uid, 10);
-	if (!isCallerAdmin) {
-		if (groups.systemGroups.includes(groupName) || groups.isPrivilegeGroup(groupName)) {
-			throw new Error('[[error:not-allowed]]');
-		}
-		if (!isSelf && (groupData.private || groupData.disableJoinRequests)) {
-			throw new Error('[[error:group-join-disabled]]');
-		}
-	}
+    const [groupData, userExists, isCallerAdmin, isSelf] = await Promise.all([
+        groups.getGroupData(groupName),
+        user.exists(targetUid),
+        privileges.admin.can('admin:groups', callerUid),
+        callerUid === targetUid
+    ]);
 
-	if (!meta.config.allowPrivateGroups && isSelf) {
-		await handlePublicGroups(caller, groupName, data.uid);
-		return;
-	}
+    if (!userExists) {
+        throw new Error('[[error:invalid-uid]]');
+    }
 
-	if (isRestrictedJoin(isCallerAdmin, isSelf, groupData)) {
-		throw new Error('[[error:group-join-disabled]]');
-	}
+    if (!isCallerAdmin && groupData.private && groupData.disableJoinRequests) {
+        throw new Error('[[error:group-join-disabled]]');
+    }
 
-	if (canJoinGroup(groupData, isSelf, isCallerAdmin)) {
-		await groups.join(groupName, data.uid);
-		logGroupEvent(caller, `group-${isSelf ? 'join' : 'add-member'}`, {
-			groupName,
-			targetUid: data.uid,
-		});
-	} else {
-		throw new Error('[[error:not-allowed]]');
-	}
+    if (!isCallerAdmin && groupData.private && !isSelf) {
+        throw new Error('[[error:group-join-disabled]]');
+    }
 
-	async function handlePublicGroups(caller, groupName, uid) {
-		await groups.join(groupName, uid);
-		logGroupEvent(caller, 'group-join', {
-			groupName,
-			targetUid: uid,
-		});
-	}
-
-	function isRestrictedJoin(isCallerAdmin, isSelf, groupData) {
-		return !isCallerAdmin && isSelf && groupData.private && groupData.disableJoinRequests;
-	}
-
-	function canJoinGroup(groupData, isSelf, isCallerAdmin) {
-		return (!groupData.private && isSelf) || isCallerAdmin;
-	}
+    if (isCallerAdmin || (!groupData.private && isSelf)) {
+        await groups.join(groupName, targetUid);
+        logGroupEvent(caller, `group-${isSelf ? 'join' : 'add-member'}`, {
+            groupName,
+            targetUid
+        });
+    } else {
+        throw new Error('[[error:not-allowed]]');
+    }
 };
+
 
 groupsAPI.leave = async function (caller, data) {
 	if (!data) {
